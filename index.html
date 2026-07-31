@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>中级会计题库</title>
+<link rel="manifest" href="manifest.json">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <!-- 登录视图 -->
+  <div id="view-login" class="view">
+    <div class="login-box">
+      <h1>中级会计题库</h1>
+      <p class="sub">财管 · 实务 · 五年真题三年模拟</p>
+      <div class="form">
+        <label>GitHub 令牌 (PAT)</label>
+        <input type="password" id="login-pat" placeholder="ghp_ 或 github_pat_ 开头" autocomplete="off">
+        <label>同步用户名（自定，用于区分设备数据）</label>
+        <input type="text" id="login-user" placeholder="如 zhangsan">
+        <div class="login-info">
+          <p>令牌用于读写你的私有数据仓库，仅存于本设备浏览器。如何获取：<span class="link" id="help-token">查看指引</span></p>
+        </div>
+        <button id="btn-login">登录 / 连接</button>
+        <div class="error" id="login-error"></div>
+      </div>
+      <div class="demo-note">未登录也可离线刷题，但不会保存进度。</div>
+    </div>
+  </div>
+
+  <!-- 主页 -->
+  <div id="view-home" class="view hidden">
+    <header class="topbar">
+      <h1>中级会计题库</h1>
+      <div class="top-right">
+        <span id="sync-status" class="sync-status"></span>
+        <button class="icon-btn" id="btn-logout" title="退出登录">⏻</button>
+      </div>
+    </header>
+    <nav class="tabs">
+      <button class="tab active" data-view="practice">刷题</button>
+      <button class="tab" data-view="wrong">错题本</button>
+      <button class="tab" data-view="stats">统计</button>
+      <button class="tab" data-view="search">搜题</button>
+      <button class="tab" data-view="settings">设置</button>
+    </nav>
+    <main id="content"></main>
+  </div>
+</div>
+
+<!-- 做题弹层 -->
+<div id="quiz-overlay" class="overlay hidden">
+  <div class="quiz-wrap">
+    <div class="quiz-head">
+      <span id="quiz-progress"></span>
+      <span id="quiz-timer"></span>
+      <button class="icon-btn" id="btn-quiz-close">✕</button>
+    </div>
+    <div id="quiz-body" class="quiz-body"></div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>

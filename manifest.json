@@ -1,0 +1,13 @@
+{
+  "name": "中级会计题库",
+  "short_name": "会计题库",
+  "description": "中级会计 财管·实务 五年真题三年模拟 刷题/错题本/统计",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f5f6fa",
+  "theme_color": "#2f6fed",
+  "lang": "zh-CN",
+  "icons": []
+}
