@@ -109,6 +109,7 @@
     return list;
   }
   function isCorrect(q, chosen) {
+    if (!q.answer) return null;  // 答案来源缺失的题不参与判分统计
     if (q.type === 'single') return chosen === q.answer;
     if (q.type === 'multi') {
       if (!chosen.length) return false;
@@ -138,12 +139,94 @@
     else if (ok === true) { if (state.wrong.has(key)) { state.wrong.delete(key); saveWrong(); syncPush('wrong'); } }
   }
 
+  function isBase(q) { return q.book === '基础速成' || q.kind === '基础速成'; }
+  function isZhuanshu(q) { return q.book === '专属练习' || q.kind === '专属练习'; }
+  function isSubjQ(q) { return q.type === 'calc' || q.type === 'comprehensive'; }
+  function qBadge(q) {
+    if (isBase(q)) {
+      const ch = q.chapter_title || q.chapter || '基础速成';
+      return `${q.subject} · ${q.kind} · ${ch} · ${qTypeCn(q)}`;
+    }
+    return `${q.subject} · ${q.kind} · ${q.vol.replace('年·' + q.subject + '·', '')} · ${qTypeCn(q)}`;
+  }
   function renderStem(q) {
-    return `<div class="q-badge">${q.subject} · ${q.kind} · ${q.vol.replace('年·' + q.subject + '·', '')} · ${qTypeCn(q)}</div>` +
+    return `<div class="q-badge">${qBadge(q)}</div>` +
            `<div class="q-stem">${escapeHtml(q.stem)}</div>`;
   }
   function escapeHtml(s) {
     return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
+  // ---------- 通用多选下拉组件 ----------
+  function renderDropdown(id, label, items) {
+    // items: [{value, text, checked, count}]
+    let html = `<div class="dropdown-multi" id="${id}">`;
+    html += `<button class="dropdown-trigger" type="button"><span class="dropdown-label">${label}</span><span class="dropdown-count"></span><span class="dropdown-arrow">▼</span></button>`;
+    html += `<div class="dropdown-panel">`;
+    html += `<div class="dropdown-actions"><button type="button" class="btn-link" data-action="all">全选</button><button type="button" class="btn-link" data-action="none">清空</button></div>`;
+    html += `<div class="dropdown-list">`;
+    items.forEach(it => {
+      html += `<label class="dropdown-item"><input type="checkbox" value="${escapeHtml(it.value)}" ${it.checked ? 'checked' : ''}><span>${escapeHtml(it.text)}${it.count !== undefined ? '（' + it.count + '题）' : ''}</span></label>`;
+    });
+    html += '</div></div></div>';
+    return html;
+  }
+  function initDropdown(id, onChange) {
+    const root = document.getElementById(id);
+    const trigger = root.querySelector('.dropdown-trigger');
+    const panel = root.querySelector('.dropdown-panel');
+    let open = false;
+    trigger.addEventListener('click', (e) => { e.stopPropagation(); open = !open; panel.classList.toggle('show', open); });
+    panel.addEventListener('click', (e) => e.stopPropagation());
+    document.addEventListener('click', () => { open = false; panel.classList.remove('show'); });
+    function refresh() {
+      const total = root.querySelectorAll('.dropdown-list input[type="checkbox"]').length;
+      const n = root.querySelectorAll('.dropdown-list input[type="checkbox"]:checked').length;
+      root.querySelector('.dropdown-count').textContent = '已选 ' + n + '/' + total;
+      if (onChange) onChange();
+    }
+    root.addEventListener('change', (e) => { if (e.target.type === 'checkbox') refresh(); });
+    root.querySelector('[data-action="all"]').addEventListener('click', () => { root.querySelectorAll('.dropdown-list input[type="checkbox"]').forEach(cb => cb.checked = true); refresh(); });
+    root.querySelector('[data-action="none"]').addEventListener('click', () => { root.querySelectorAll('.dropdown-list input[type="checkbox"]').forEach(cb => cb.checked = false); refresh(); });
+    refresh();
+  }
+  function refreshDropdown(id) {
+    const root = document.getElementById(id);
+    const total = root.querySelectorAll('.dropdown-list input[type="checkbox"]').length;
+    const n = root.querySelectorAll('.dropdown-list input[type="checkbox"]:checked').length;
+    root.querySelector('.dropdown-count').textContent = '已选 ' + n + '/' + total;
+  }
+  function readDropdown(id) {
+    return [...document.querySelectorAll('#' + id + ' .dropdown-list input[type="checkbox"]:checked')].map(cb => cb.value);
+  }
+  function setDropdownItems(id, label, items) {
+    const root = document.getElementById(id);
+    root.querySelector('.dropdown-label').textContent = label;
+    root.querySelector('.dropdown-list').innerHTML = items.map(it =>
+      `<label class="dropdown-item"><input type="checkbox" value="${escapeHtml(it.value)}" ${it.checked ? 'checked' : ''}><span>${escapeHtml(it.text)}${it.count !== undefined ? '（' + it.count + '题）' : ''}</span></label>`
+    ).join('');
+  }
+  function selectedTypes(id) {
+    return new Set([...document.querySelectorAll('#' + id + ' .chip.active')].map(c => c.dataset.ty));
+  }
+  function bindTypeChips(id) {
+    document.querySelectorAll('#' + id + ' .chip[data-ty]').forEach(c => c.addEventListener('click', () => c.classList.toggle('active')));
+  }
+
+  // 主观题(计算/综合/变形)的解析与参考答案为 HTML(表格), 直接渲染; 客观题为纯文本需转义
+  function renderAnalysis(q) {
+    if (isSubjQ(q)) {
+      const h = (q.analysis_html || '').trim();
+      if (h) return h;
+    }
+    return escapeHtml(q.analysis || '(无解析)');
+  }
+  function renderAnswerRef(q) {
+    if (isSubjQ(q)) {
+      const h = (q.answer_html || '').trim();
+      if (h) return h;
+    }
+    return escapeHtml(q.answer || '(无)');
   }
 
   // ============ 做题会话 ============
@@ -209,14 +292,16 @@
     if (cur.graded[q.id] !== undefined) {
       const verdict = cur.graded[q.id];
       html += '<div class="answer-panel">';
-      if (q.type === 'calc' || q.type === 'comprehensive') {
+      if (q.no_answer) {
+        html += `<div class="a-content">（本题答案来源缺失，无法自动判分，请对照教材）</div>`;
+      } else if (isSubjQ(q)) {
         html += `<div class="a-verdict ${verdict ? 'verdict-right' : 'verdict-wrong'}">${verdict ? '✓ 自评正确' : '✗ 自评错误'}</div>`;
+        html += `<h4>参考答案</h4><div class="a-content a-html">${renderAnswerRef(q)}</div>`;
       } else {
         html += `<div class="a-verdict ${verdict ? 'verdict-right' : 'verdict-wrong'}">${verdict ? '✓ 回答正确' : '✗ 回答错误'}</div>`;
         html += `<h4>正确答案：${escapeHtml(q.answer)}</h4>`;
       }
-      html += `<h4>解析</h4><div class="a-content">${escapeHtml(q.analysis || '(无解析)')}</div>`;
-      html += `<h4>参考答案</h4><div class="a-content">${escapeHtml(q.type === 'calc' || q.type === 'comprehensive' ? q.answer : q.answer)}</div>`;
+      html += `<h4>解析</h4><div class="a-content a-html">${renderAnalysis(q)}</div>`;
       html += '</div>';
     }
 
@@ -313,8 +398,8 @@
     // 显示参考答案并让用户自评
     let html = renderStem(q);
     html += '<div class="answer-panel">';
-    html += `<h4>参考答案</h4><div class="a-content">${escapeHtml(q.answer || '(无)')}</div>`;
-    html += `<h4>解析</h4><div class="a-content">${escapeHtml(q.analysis || '(无)')}</div>`;
+    html += `<h4>参考答案</h4><div class="a-content a-html">${renderAnswerRef(q)}</div>`;
+    html += `<h4>解析</h4><div class="a-content a-html">${renderAnalysis(q)}</div>`;
     html += '</div>';
     html += '<div class="subj-answer self-grade"><div class="self-grade">';
     html += '<button class="btn green" id="btn-self-right">✓ 答对了</button>';
@@ -357,33 +442,230 @@
   }
 
   // ============ 练习视图 ============
+  const CN_NUM = { '一': 1, '二': 2, '三': 3, '四': 4, '五': 5, '六': 6, '七': 7, '八': 8, '九': 9, '十': 10 };
+  function chNum(ch) {
+    const m = /第([一二三四五六七八九十]+)章/.exec(ch || '');
+    if (!m) return 99;
+    const s = m[1];
+    if (s === '十') return 10;
+    if (s.startsWith('十')) return 10 + CN_NUM[s[1]];
+    if (s.endsWith('十')) return CN_NUM[s[0]] * 10;
+    if (s.includes('十')) return CN_NUM[s[0]] * 10 + CN_NUM[s[2]];
+    return CN_NUM[s] || 99;
+  }
+
   function renderPractice(content) {
+    const books = [['真题模拟', '真题模拟', '五年真题三年模拟'], ['基础速成', '基础速成', '刘阳·基础速成'], ['专属练习', '专属练习·实务+财管', '斯尔专属练习']];
+    let html = '<div class="card"><h3>选择题库</h3><div class="chip-row">';
+    books.forEach(([b, l, d]) => {
+      const n = bank.filter(q =>
+        b === '基础速成' ? isBase(q) :
+        b === '专属练习' ? isZhuanshu(q) :
+        (!isBase(q) && !isZhuanshu(q))).length;
+      html += `<div class="chip" data-book="${b}" title="${d}">${l}（${n}题）</div>`;
+    });
+    html += '</div></div><div id="practice-body"></div>';
+    content.innerHTML = html;
+    let book = '真题模拟';
+    const body = document.getElementById('practice-body');
+    const renderBook = () => {
+      renderPracticeBody(body, book);
+      document.querySelectorAll('.chip[data-book]').forEach(x => x.classList.toggle('active', x.dataset.book === book));
+    };
+    document.querySelectorAll('.chip[data-book]').forEach(c => c.addEventListener('click', () => {
+      book = c.dataset.book;
+      renderBook();
+    }));
+    renderBook();
+  }
+
+  function renderPracticeBody(content, book) {
+    if (book === '基础速成') { renderSucheng(content, '基础速成'); return; }
+    if (book === '专属练习') { renderSucheng(content, '专属练习'); return; }
+    renderZhentiPractice(content);
+  }
+
+  function renderZhentiPractice(content) {
     const subs = ['财管', '实务'];
-    let html = '<div class="card"><h3>选择科目</h3><div class="chip-row">';
+    let subj = '财管';
+
+    function getVols(s) {
+      return [...new Set(bank.filter(q => q.subject === s && !isBase(q)).map(q => q.vol))].sort();
+    }
+    function volItems(s) {
+      return getVols(s).map(v => ({
+        value: v,
+        text: v.replace('年·' + s + '·', ' 年 '),
+        checked: true,
+        count: bank.filter(q => q.vol === v).length
+      }));
+    }
+    const allTypes = [...new Set(bank.filter(q => !isBase(q)).map(q => q.qtype_cn))];
+
+    let html = '<div class="card"><h3>选择科目</h3><div class="chip-row" id="zhenti-subj">';
     subs.forEach(s => {
-      const count = bank.filter(q => q.subject === s).length;
-      html += `<div class="chip" data-subj="${s}">${s}（${count}题）</div>`;
+      const count = bank.filter(q => q.subject === s && !isBase(q)).length;
+      html += `<div class="chip ${s === subj ? 'active' : ''}" data-subj="${s}">${s}（${count}题）</div>`;
     });
     html += '</div></div>';
-    html += '<div class="card"><h3>练习方式</h3>';
-    html += '<div class="btn-row">';
-    html += '<button class="btn primary" id="btn-byvol">按卷练习</button>';
-    html += '<button class="btn green" id="btn-random">随机 20 题</button>';
-    html += '<button class="btn ghost" id="btn-mock">模拟考</button>';
+
+    html += '<div class="card"><h3>选择试卷（可多选）</h3>';
+    html += renderDropdown('zhenti-vol', '试卷', volItems(subj));
+    html += '</div>';
+
+    html += '<div class="card"><h3>题型筛选（可多选）</h3><div class="chip-row" id="zhenti-ty">';
+    allTypes.forEach(t => {
+      const n = bank.filter(q => !isBase(q) && q.qtype_cn === t).length;
+      if (n) html += `<div class="chip active" data-ty="${t}">${t}（${n}题）</div>`;
+    });
     html += '</div></div>';
+
+    html += '<div class="card"><h3>练习方式</h3><div class="btn-row">';
+    html += '<button class="btn primary" id="btn-zhenti-start">按所选练习</button>';
+    html += '<button class="btn green" id="btn-zhenti-random">随机 20 题</button>';
+    html += '<button class="btn ghost" id="btn-zhenti-mock">模拟考</button>';
+    html += '</div></div>';
+
     content.innerHTML = html;
 
-    let subj = '财管';
-    document.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => {
+    initDropdown('zhenti-vol');
+    bindTypeChips('zhenti-ty');
+
+    document.querySelectorAll('#zhenti-subj .chip').forEach(c => c.addEventListener('click', () => {
       subj = c.dataset.subj;
-      document.querySelectorAll('.chip').forEach(x => x.classList.toggle('active', x === c));
+      document.querySelectorAll('#zhenti-subj .chip').forEach(x => x.classList.toggle('active', x === c));
+      setDropdownItems('zhenti-vol', '试卷', volItems(subj));
+      refreshDropdown('zhenti-vol');
     }));
-    document.getElementById('btn-byvol').addEventListener('click', () => renderVolSelect(content, subj));
-    document.getElementById('btn-random').addEventListener('click', () => {
-      const list = shuffle(bank.filter(q => q.subject === subj)).slice(0, 20);
+    document.querySelectorAll('#zhenti-subj .chip').forEach(c => c.classList.toggle('active', c.dataset.subj === subj));
+
+    function filterList(limit) {
+      const vs = readDropdown('zhenti-vol');
+      const ts = selectedTypes('zhenti-ty');
+      let list = bank.filter(q => !isBase(q) && q.subject === subj && vs.includes(q.vol) && ts.has(q.qtype_cn));
+      if (limit) list = shuffle(list).slice(0, limit);
+      return list;
+    }
+
+    document.getElementById('btn-zhenti-start').addEventListener('click', () => {
+      const list = filterList();
+      if (!list.length) { alert('当前筛选下没有题目'); return; }
       startQuiz(list, 'practice');
     });
-    document.getElementById('btn-mock').addEventListener('click', () => renderMockSetup(content, subj));
+    document.getElementById('btn-zhenti-random').addEventListener('click', () => {
+      const list = filterList(20);
+      if (!list.length) { alert('当前筛选下没有题目'); return; }
+      startQuiz(list, 'practice');
+    });
+    document.getElementById('btn-zhenti-mock').addEventListener('click', () => renderMockSetup(content, filterList, '真题模拟 · ' + subj));
+  }
+
+
+  // ---------- 章节练习(基础速成 / 专属练习): 科目 + 章节下拉多选 + 题型筛选 ----------
+  function renderSucheng(content, book) {
+    const isZs = (book === '专属练习');
+    const base = bank.filter(q => isZs ? isZhuanshu(q) : isBase(q));
+    const subs = [...new Set(base.map(q => q.subject))];
+    let subj = subs[0] || '实务';
+
+    function chaptersFor(s) {
+      const cs = [], seen = new Set();
+      base.filter(q => q.subject === s).forEach(q => {
+        const key = q.chapter_title || q.chapter || '';
+        if (key && !seen.has(key)) { seen.add(key); cs.push(key); }
+      });
+      return cs.sort((a, b) => chNum(a) - chNum(b));
+    }
+    const chapterItems = () => chaptersFor(subj).map(c => ({
+      value: c, text: c, checked: true,
+      count: base.filter(q => q.subject === subj && (q.chapter_title || q.chapter) === c).length
+    }));
+    const types = ['单选', '多选', '判断', '计算', '综合', '变形'];
+
+    function typeChips() {
+      let h = '';
+      types.forEach(t => {
+        const n = base.filter(q => q.subject === subj && q.qtype_cn === t).length;
+        if (n) h += `<div class="chip active" data-ty="${t}">${t}（${n}题）</div>`;
+      });
+      return h;
+    }
+
+    function render() {
+      let html = '';
+      if (subs.length > 1) {
+        html += '<div class="card"><h3>选择科目</h3><div class="chip-row" id="sc-subj">';
+        subs.forEach(s => {
+          const n = base.filter(q => q.subject === s).length;
+          const lbl = isZs ? s + '专属练习' : s;
+          html += `<div class="chip ${s === subj ? 'active' : ''}" data-subj="${s}">${lbl}（${n}题）</div>`;
+        });
+        html += '</div></div>';
+      }
+      html += '<div class="card"><h3>选择章节（可多选）</h3>';
+      html += renderDropdown('sucheng-ch', '章节', chapterItems());
+      html += '</div>';
+
+      html += '<div class="card"><h3>题型筛选（可多选）</h3><div class="chip-row" id="sucheng-ty">';
+      html += typeChips();
+      html += '</div></div>';
+
+      html += '<div class="card"><h3>练习方式</h3><div class="btn-row">';
+      html += '<button class="btn primary" id="btn-sucheng-start">按所选练习</button>';
+      html += '<button class="btn green" id="btn-sucheng-random">随机 20 题</button>';
+      html += '<button class="btn ghost" id="btn-sucheng-mock">模拟考</button>';
+      html += '</div></div>';
+      content.innerHTML = html;
+
+      initDropdown('sucheng-ch');
+      bindTypeChips('sucheng-ty');
+
+      if (subs.length > 1) {
+        document.querySelectorAll('#sc-subj .chip').forEach(c => c.addEventListener('click', () => {
+          subj = c.dataset.subj;
+          document.querySelectorAll('#sc-subj .chip').forEach(x => x.classList.toggle('active', x === c));
+          setDropdownItems('sucheng-ch', '章节', chapterItems());
+          refreshDropdown('sucheng-ch');
+        }));
+      }
+    }
+    render();
+
+    function filterList(limit) {
+      const cs = readDropdown('sucheng-ch');
+      const ts = selectedTypes('sucheng-ty');
+      let list = base.filter(q => q.subject === subj && cs.includes(q.chapter_title || q.chapter) && ts.has(q.qtype_cn));
+      if (limit) list = shuffle(list).slice(0, limit);
+      return list;
+    }
+
+    document.getElementById('btn-sucheng-start').addEventListener('click', () => {
+      const list = filterList();
+      if (!list.length) { alert('当前筛选下没有题目'); return; }
+      startQuiz(list, 'practice');
+    });
+    document.getElementById('btn-sucheng-random').addEventListener('click', () => {
+      const list = filterList(20);
+      if (!list.length) { alert('当前筛选下没有题目'); return; }
+      startQuiz(list, 'practice');
+    });
+    document.getElementById('btn-sucheng-mock').addEventListener('click', () => renderMockSetup(content, filterList, isZs ? subj + '专属练习' : '基础速成'));
+  }
+
+  function renderMockSetup(content, filterFn, title) {
+    content.innerHTML = `<div class="card"><h3>${title} · 模拟考设置</h3>
+      <div class="set-row"><span class="lbl">抽题数量</span><input type="number" id="mock-num" value="40" min="5" max="120"></div>
+      <div class="set-row"><span class="lbl">限时（分钟）</span><input type="number" id="mock-min" value="60" min="5" max="180"></div>
+      <button class="btn primary" id="btn-start-mock" style="margin-top:16px;">开始模拟考</button>
+      <button class="btn ghost" id="btn-back" style="margin-top:8px;">← 返回</button></div>`;
+    document.getElementById('btn-start-mock').addEventListener('click', () => {
+      const n = parseInt(document.getElementById('mock-num').value) || 40;
+      const min = parseInt(document.getElementById('mock-min').value) || 60;
+      const list = shuffle(filterFn()).slice(0, n);
+      if (!list.length) { alert('当前筛选下没有题目'); return; }
+      startQuiz(list, 'exam', { timer: min * 60 });
+    });
+    document.getElementById('btn-back').addEventListener('click', () => showView('practice'));
   }
 
   function shuffle(arr) {
@@ -395,70 +677,6 @@
     return a;
   }
 
-  function renderVolSelect(content, subj) {
-    // 收集该科目的卷
-    const vols = [];
-    const seen = new Set();
-    bank.filter(q => q.subject === subj).forEach(q => {
-      if (!seen.has(q.vol)) { seen.add(q.vol); vols.push(q.vol); }
-    });
-    let html = '<div class="card"><h3>选择卷</h3>';
-    html += `<button class="btn ghost" id="btn-back" style="width:auto;padding:8px 14px;font-size:14px;">← 返回</button></div>`;
-    vols.forEach(v => {
-      const qs = bank.filter(q => q.vol === v);
-      html += `<div class="vol-item" data-vol="${v}">
-        <span class="vname">${v.replace('年·' + subj + '·', ' 年 ')}</span>
-        <span class="vmeta">${qs.length} 题</span></div>`;
-    });
-    content.innerHTML = html;
-    document.getElementById('btn-back').addEventListener('click', () => showView('practice'));
-    document.querySelectorAll('.vol-item').forEach(el => el.addEventListener('click', () => {
-      renderVolDetail(content, subj, el.dataset.vol);
-    }));
-  }
-
-  function renderVolDetail(content, subj, vol) {
-    const qs = bank.filter(q => q.vol === vol);
-    const types = {};
-    qs.forEach(q => { types[q.qtype_cn] = (types[q.qtype_cn] || 0) + 1; });
-    let html = `<div class="card"><h3>${vol.replace('年·' + subj + '·', ' 年 ')}</h3>`;
-    html += `<button class="btn ghost" id="btn-back" style="width:auto;padding:8px 14px;font-size:14px;">← 返回</button></div>`;
-    html += '<div class="card"><h3>题型</h3><div class="chip-row">';
-    Object.keys(types).forEach(t => {
-      html += `<div class="chip" data-type="${t}">${t}（${types[t]}题）</div>`;
-    });
-    html += '</div><button class="btn primary" id="btn-start" style="margin-top:14px;">开始本卷</button></div>';
-    content.innerHTML = html;
-    let selTypes = new Set(Object.keys(types));
-    document.querySelectorAll('.chip').forEach(c => c.addEventListener('click', () => {
-      const t = c.dataset.type;
-      if (selTypes.has(t)) { selTypes.delete(t); c.classList.remove('active'); }
-      else { selTypes.add(t); c.classList.add('active'); }
-    }));
-    document.querySelectorAll('.chip').forEach(c => c.classList.add('active'));
-    document.getElementById('btn-back').addEventListener('click', () => renderVolSelect(content, subj));
-    document.getElementById('btn-start').addEventListener('click', () => {
-      const list = qs.filter(q => selTypes.has(q.qtype_cn));
-      startQuiz(list, 'practice');
-    });
-  }
-
-  // ============ 模拟考 ============
-  function renderMockSetup(content, subj) {
-    content.innerHTML = `<div class="card"><h3>模拟考设置</h3>
-      <div class="chip-row"><span class="label">科目</span><div class="chip active">${subj}</div></div>
-      <div class="set-row"><span class="lbl">抽题数量</span><input type="number" id="mock-num" value="40" min="5" max="80"></div>
-      <div class="set-row"><span class="lbl">限时（分钟）</span><input type="number" id="mock-min" value="60" min="5" max="180"></div>
-      <button class="btn primary" id="btn-start-mock" style="margin-top:16px;">开始模拟考</button>
-      <button class="btn ghost" id="btn-back" style="margin-top:8px;">← 返回</button></div>`;
-    document.getElementById('btn-start-mock').addEventListener('click', () => {
-      const n = parseInt(document.getElementById('mock-num').value) || 40;
-      const min = parseInt(document.getElementById('mock-min').value) || 60;
-      const list = shuffle(bank.filter(q => q.subject === subj)).slice(0, n);
-      startQuiz(list, 'exam', { timer: min * 60 });
-    });
-    document.getElementById('btn-back').addEventListener('click', () => showView('practice'));
-  }
 
   // ============ 错题本 ============
   function renderWrong(content) {
@@ -473,7 +691,7 @@
     } else {
       list.slice(0, 30).forEach(q => {
         html += `<div class="search-result" data-qid="${q.id}">
-          <div class="q-meta">${q.subject} · ${q.vol.replace('年·' + q.subject + '·', '')} · ${qTypeCn(q)}</div>
+          <div class="q-meta">${qBadge(q)}</div>
           <div class="q-stem">${escapeHtml(q.stem.slice(0, 80))}…</div></div>`;
       });
       if (list.length > 30) html += '<div class="card" style="text-align:center;color:var(--muted);font-size:13px;">仅显示前 30 条，全部可在打印中查看</div>';
@@ -495,13 +713,17 @@
     let html = '<html><head><meta charset="utf-8"><title>错题本</title><style>';
     html += 'body{font-family:-apple-system,"PingFang SC",sans-serif;padding:24px;color:#222;}';
     html += 'h1{font-size:20px;} .q{margin-bottom:18px;page-break-inside:avoid;border-bottom:1px solid #ddd;padding-bottom:14px;}';
-    html += '.stem{font-size:15px;margin-bottom:8px;} .ans{font-size:13px;color:#555;}';
+    html += '.stem{font-size:15px;margin-bottom:8px;white-space:pre-wrap;} .ans{font-size:13px;color:#555;}';
     html += '.exp{font-size:13px;color:#777;margin-top:6px;white-space:pre-wrap;}';
+    html += 'table.qtable{border-collapse:collapse;margin:8px 0;width:100%;font-size:13px;color:#333;}';
+    html += 'table.qtable td{border:1px solid #ccc;padding:6px 8px;vertical-align:top;white-space:pre-wrap;}';
+    html += '.q-tips{background:#f0f5ff;border-left:3px solid #2f6fed;padding:8px 10px;margin:8px 0;font-size:13px;}';
     html += '</style></head><body><h1>中级会计 · 错题本（' + list.length + ' 题）</h1>';
     list.forEach(q => {
-      html += `<div class="q"><div class="stem">【${q.subject} · ${q.vol.replace('年·' + q.subject + '·', '')} · ${qTypeCn(q)}】${escapeHtml(q.stem)}</div>`;
-      html += `<div class="ans">答案：${escapeHtml(q.answer || '')}</div>`;
-      if (q.analysis) html += `<div class="exp">解析：${escapeHtml(q.analysis)}</div>`;
+      html += `<div class="q"><div class="stem">【${qBadge(q)}】${escapeHtml(q.stem)}</div>`;
+      html += `<div class="ans">答案：${isSubjQ(q) && (q.answer_html || '').trim() ? q.answer_html : escapeHtml(q.answer || '')}</div>`;
+      const ah = (q.analysis_html || '').trim();
+      if (q.analysis || ah) html += `<div class="exp">解析：${isSubjQ(q) && ah ? ah : escapeHtml(q.analysis)}</div>`;
       html += '</div>';
     });
     html += '</body></html>';
@@ -539,7 +761,7 @@
     if (recent.length === 0) html += '<div style="color:var(--muted);">还没有做题记录，去刷题吧！</div>';
     recent.forEach(r => {
       const q = bank.find(x => x.id === r.id);
-      if (q) html += `<div class="bar-row"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${q.vol.replace('年·' + q.subject + '·', '')} ${qTypeCn(q)}</span><span>${new Date(r.last).toLocaleDateString()}</span></div>`;
+      if (q) html += `<div class="bar-row"><span style="flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${qBadge(q)}</span><span>${new Date(r.last).toLocaleDateString()}</span></div>`;
     });
     html += '</div>';
     content.innerHTML = html;
@@ -558,10 +780,10 @@
       searchTimer = setTimeout(() => {
         const kw = input.value.trim();
         if (!kw) { results.innerHTML = ''; return; }
-        const hits = bank.filter(q => (q.stem + (q.answer || '') + (q.analysis || '')).includes(kw)).slice(0, 30);
+        const hits = bank.filter(q => (q.stem + (q.answer || '') + (q.analysis || '') + (q.analysis_html || '') + (q.answer_html || '')).includes(kw)).slice(0, 30);
         if (hits.length === 0) { results.innerHTML = '<div style="color:var(--muted);">未找到相关题目</div>'; return; }
         results.innerHTML = hits.map(q => `<div class="search-result" data-qid="${q.id}">
-          <div class="q-meta">${q.subject} · ${q.vol.replace('年·' + q.subject + '·', '')} · ${qTypeCn(q)}</div>
+          <div class="q-meta">${qBadge(q)}</div>
           <div class="q-stem">${escapeHtml(q.stem.slice(0, 70))}…</div></div>`).join('');
         results.querySelectorAll('.search-result').forEach(el => el.addEventListener('click', () => {
           const q = bank.find(x => x.id === parseInt(el.dataset.qid));
