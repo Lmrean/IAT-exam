@@ -1,0 +1,7 @@
+# local secrets / deploy helpers (never push these)
+deploy_token.txt
+
+# OS / editor junk
+Thumbs.db
+Desktop.ini
+.DS_Store

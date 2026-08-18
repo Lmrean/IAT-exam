@@ -1,4 +1,4 @@
-const CACHE = 'sier-v4'; // 专属练习合并：库名显示"专属练习·实务+财管"+科目chip改"X专属练习"
+const CACHE = 'sier-v5'; // 升版强制刷新：章节/科目联动题型数量 + isCorrect 判分修复
 const ASSETS = [
   './index.html',
   './style.css',

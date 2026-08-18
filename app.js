@@ -110,14 +110,15 @@
   }
   function isCorrect(q, chosen) {
     if (!q.answer) return null;  // 答案来源缺失的题不参与判分统计
-    if (q.type === 'single') return chosen === q.answer;
+    const ans = String(q.answer).trim();
+    if (q.type === 'single') return chosen[0] === ans;
     if (q.type === 'multi') {
       if (!chosen.length) return false;
       const a = [...chosen].sort().join('');
-      const b = [...q.answer].sort().join('');
+      const b = [...ans].sort().join('');
       return a === b;
     }
-    if (q.type === 'judge') return chosen === q.answer;
+    if (q.type === 'judge') return chosen[0] === ans;
     return null; // 主观题
   }
   function qTypeCn(q) { return q.qtype_cn || q.type; }
@@ -582,13 +583,24 @@
     }));
     const types = ['单选', '多选', '判断', '计算', '综合', '变形'];
 
-    function typeChips() {
+    function typeChips(cs) {
       let h = '';
       types.forEach(t => {
-        const n = base.filter(q => q.subject === subj && q.qtype_cn === t).length;
+        const n = base.filter(q => q.subject === subj && q.qtype_cn === t && cs.has(q.chapter_title || q.chapter)).length;
         if (n) h += `<div class="chip active" data-ty="${t}">${t}（${n}题）</div>`;
       });
       return h;
+    }
+
+    function updateTypeChips() {
+      const cs = new Set(readDropdown('sucheng-ch'));
+      const active = selectedTypes('sucheng-ty');
+      const box = document.getElementById('sucheng-ty');
+      box.innerHTML = typeChips(cs);
+      document.querySelectorAll('#sucheng-ty .chip[data-ty]').forEach(c => {
+        if (active.has(c.dataset.ty)) c.classList.add('active');
+      });
+      bindTypeChips('sucheng-ty');
     }
 
     function render() {
@@ -607,7 +619,7 @@
       html += '</div>';
 
       html += '<div class="card"><h3>题型筛选（可多选）</h3><div class="chip-row" id="sucheng-ty">';
-      html += typeChips();
+      html += typeChips(new Set(chaptersFor(subj)));
       html += '</div></div>';
 
       html += '<div class="card"><h3>练习方式</h3><div class="btn-row">';
@@ -617,8 +629,8 @@
       html += '</div></div>';
       content.innerHTML = html;
 
-      initDropdown('sucheng-ch');
-      bindTypeChips('sucheng-ty');
+      initDropdown('sucheng-ch', updateTypeChips);
+      updateTypeChips();
 
       if (subs.length > 1) {
         document.querySelectorAll('#sc-subj .chip').forEach(c => c.addEventListener('click', () => {
@@ -626,6 +638,7 @@
           document.querySelectorAll('#sc-subj .chip').forEach(x => x.classList.toggle('active', x === c));
           setDropdownItems('sucheng-ch', '章节', chapterItems());
           refreshDropdown('sucheng-ch');
+          updateTypeChips();
         }));
       }
     }

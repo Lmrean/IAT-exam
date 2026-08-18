@@ -1,118 +1,116 @@
 @echo off
 setlocal EnableDelayedExpansion
-chcp 65001 >nul
+rem ---- deploy to GitHub Pages (IAT-exam) ----
+rem URL uses https://git@github.com/ form to bypass global
+rem "https://github.com/ -> git@github.com:" insteadOf rewrite,
+rem while KEEPING global config (http.proxy etc) intact.
 
-set "OWNER=Lmrean"
-set "REPO=IAT-exam"
+set "SRC=%~dp0"
+set "REPO=Lmrean/IAT-exam"
 set "BRANCH=main"
 set "DEPLOY=G:\Desktop\IAT-exam-deploy"
-set "SRC=%~dp0"
+set "GHURL=https://git@github.com/%REPO%.git"
+set "TOKEN="
+set "AUTH="
 
-echo ============================================================
-echo  Sier CPA Quiz - one-click deploy to GitHub Pages
-echo  repo : %OWNER%/%REPO%   branch: %BRANCH%
-echo  src  : %SRC%
-echo  dest : %DEPLOY%
-echo ============================================================
-echo.
+if exist "%SRC%deploy_token.txt" (
+  for /f "usebackq delims=" %%a in ("%SRC%deploy_token.txt") do ( if not defined TOKEN set "TOKEN=%%a" )
+)
+if defined TOKEN (
+  for /f "usebackq delims=" %%a in (`powershell -NoProfile -Command "$t=$env:TOKEN; [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('Lmrean:'+$t))"`) do set "AUTH=%%a"
+)
 
 call :MAIN
-
 echo.
 echo ============================================================
-echo  [SCRIPT ENDED] See output above. Press any key to close.
-echo  If it failed, follow the [ERR] hints above. You can also
-echo  open a Command Prompt, cd into sier-app, and run deploy.bat
-echo  to watch live output.
+echo  Done. Open: https://lmrean.github.io/IAT-exam/
 echo ============================================================
 pause >nul
 goto :EOF
 
 :MAIN
-REM --- self-check: git available? ---
-where git >nul 2>nul
+echo ============================================================
+echo  Sier CPA Quiz - one-click deploy to GitHub Pages
+echo  repo : %REPO%   branch: %BRANCH%
+echo  src  : %SRC%
+echo  dest : %DEPLOY%
+echo ============================================================
+echo.
+call :CLONE
+if errorlevel 1 goto :EOF
+call :COPY
+if errorlevel 1 goto :EOF
+call :COMMIT
+call :PUSH
+goto :EOF
+
+:CLONE
+echo [1/4] Clone repo over HTTPS ...
+if exist "%DEPLOY%" (
+  echo   removing old deploy dir ...
+  rmdir /s /q "%DEPLOY%" 2>nul
+)
+git clone "%GHURL%" "%DEPLOY%" 2>&1
 if errorlevel 1 (
-  echo [ERR] git not found. Install Git for Windows first.
-  goto :ENDMAIN
+  echo [ERR] clone failed! check:
+  echo   1. repo renamed/created as %REPO%
+  echo   2. internet + git installed
+  echo   3. deploy_token.txt must contain a classic token with repo scope
+  exit /b 1
 )
+exit /b 0
 
-REM --- self-check: app.js present in source? ---
-if not exist "%SRC%app.js" (
-  echo [ERR] app.js not found in source: %SRC%
-  echo       Make sure this script lives inside the sier-app folder.
-  goto :ENDMAIN
+:COPY
+echo [2/4] Copy sier-app into deploy dir ...
+xcopy "%SRC%*.*" "%DEPLOY%\" /E /Y /Q >nul
+if errorlevel 1 (
+  echo [ERR] copy failed!
+  exit /b 1
 )
+if exist "%DEPLOY%\deploy_token.txt" del /f /q "%DEPLOY%\deploy_token.txt"
+exit /b 0
 
-REM --- prepare deploy dir ---
-if exist "%DEPLOY%\.git" (
-  echo.
-  echo [1/4] Deploy dir exists, try git pull ...
-  pushd "%DEPLOY%"
-  git pull --ff-only
-  if errorlevel 1 (
-    popd
-    echo [WARN] git pull failed, will delete and re-clone deploy dir.
-    choice /C YN /M "Delete and re-clone deploy dir? Y/N"
-    if errorlevel 2 ( echo Cancelled. & goto :ENDMAIN )
-    rmdir /S /Q "%DEPLOY%"
-  ) else (
-    popd
-  )
-)
-
-if not exist "%DEPLOY%\.git" (
-  echo.
-  echo [1/4] Clone %OWNER%/%REPO% ...
-  git clone https://github.com/%OWNER%/%REPO%.git "%DEPLOY%"
-  if errorlevel 1 (
-    echo.
-    echo [ERR] clone failed! Check:
-    echo   1. repo renamed/created as %OWNER%/%REPO% on GitHub
-    echo   2. internet + git installed
-    echo   3. if asked, login via Git Credential Manager popup
-    goto :ENDMAIN
-  )
-)
-
-REM --- 2. copy latest source ---
-echo.
-echo [2/4] Copy source into deploy dir ...
-xcopy "%SRC%" "%DEPLOY%" /E /Y /Q
-
-REM --- 3. commit ---
-echo.
+:COMMIT
 echo [3/4] Commit changes ...
-pushd "%DEPLOY%"
+cd /d "%DEPLOY%"
+if not exist ".git" (
+  echo [ERR] no .git found, clone must have failed.
+  exit /b 1
+)
+git config user.name >nul 2>&1 || git config user.name "Lmrean"
+git config user.email >nul 2>&1 || git config user.email "lmrean@users.noreply.github.com"
 git add -A
 git diff --cached --quiet
 if errorlevel 1 (
-  git config user.name >nul 2>nul || git config user.name "Lmrean"
-  git config user.email >nul 2>nul || git config user.email "Lmrean@users.noreply.github.com"
-  git commit -m "merge exclusive-practice bank: +1160 (shiwu25+caioguan10), unified filter (total 2075)"
+  git commit -m "deploy: update quiz app (bank + ui)" 2>&1
 ) else (
-  echo Nothing new to commit.
+  echo  nothing new to commit, already up to date.
 )
+exit /b 0
 
-REM --- 4. push ---
-echo.
-echo [4/4] Push to %BRANCH% ...
-git push origin %BRANCH%
-if errorlevel 1 (
-  echo.
-  echo [ERR] push failed! Possible causes:
-  echo   - no git credential: run git config --global credential.helper manager, retry
-  echo   - default branch is not %BRANCH%: change BRANCH to master and retry
-  popd
-  goto :ENDMAIN
+:PUSH
+echo [4/4] Push to GitHub over HTTPS ...
+cd /d "%DEPLOY%"
+if not exist ".git" (
+  echo [ERR] no .git found, clone must have failed.
+  exit /b 1
 )
-popd
-
-echo.
-echo ============================================================
-echo  Done! Visit after ~1 min:
-echo  https://%OWNER%.github.io/%REPO%/
-echo  (repo renamed to IAT-exam; old sier-quiz URL is dead)
-echo ============================================================
-
-:ENDMAIN
-goto :EOF
+set /a TRY=1
+:PUSH_LOOP
+if defined AUTH (
+  git -c http.extraHeader="Authorization: Basic %AUTH%" push "%GHURL%" %BRANCH% 2>&1
+) else (
+  git push origin %BRANCH% 2>&1
+)
+if not errorlevel 1 (
+  echo  push ok.
+  exit /b 0
+)
+if %TRY% GEQ 3 (
+  echo [ERR] push failed after %TRY% tries! check network / token / repo permission.
+  exit /b 1
+)
+echo   network hiccup, retry %TRY% in 5s ...
+set /a TRY+=1
+timeout /t 5 /nobreak >nul
+goto :PUSH_LOOP
